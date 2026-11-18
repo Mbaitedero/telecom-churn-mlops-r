@@ -13,6 +13,7 @@ source(here::here("R", "data_ingestion.R"))
 source(here::here("R", "data_validation.R"))
 source(here::here("R", "preprocessing.R"))
 source(here::here("R", "predict.R"))
+source(here::here("R", "monitoring.R"))
 
 
 # make_fake_customers()
