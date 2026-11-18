@@ -72,7 +72,9 @@ psi_status <- function(psi, warn = 0.10, alert = 0.25) {
 #            trié par PSI décroissant
 detect_drift <- function(reference, current, num_cols, cat_cols) {
   num <- lapply(num_cols, function(v) {
-    ks <- suppressWarnings(stats::ks.test(reference[[v]], current[[v]]))
+    # exact = FALSE : p-value asymptotique, beaucoup plus rapide avec des ex æquo
+    ks <- suppressWarnings(stats::ks.test(reference[[v]], current[[v]],
+                                          exact = FALSE))
     tibble::tibble(
       variable   = v, type = "numeric",
       psi        = psi_numeric(reference[[v]], current[[v]]),
@@ -94,7 +96,6 @@ detect_drift <- function(reference, current, num_cols, cat_cols) {
     dplyr::arrange(dplyr::desc(psi))
 }
 
-
 # score_drift()
 #   PSI des probabilités de churn prédites (dérive du score du modèle).
 #   Input  : final = list(model, threshold), reference, current
@@ -112,23 +113,30 @@ score_drift <- function(final, reference, current) {
 # monitor_performance()
 #   Compare la performance courante à la référence (nécessite la colonne
 #   Churn : en pratique, les vrais résultats arrivent avec du retard).
-#   Input  : final, current (avec Churn), reference_metrics (recall, roc_auc),
-#            max_recall_drop, max_auc_drop
+#   Alerte si le recall, la precision ou l'AUC baisse au-delà d'un seuil.
+#   Input  : final, current (avec Churn), reference_metrics (recall, precision,
+#            roc_auc), max_recall_drop, max_precision_drop, max_auc_drop
 #   Output : tibble d'une ligne (métriques, baisses, alert = TRUE/FALSE)
 monitor_performance <- function(final, current, reference_metrics,
-                                max_recall_drop = 0.05, max_auc_drop = 0.03) {
+                                max_recall_drop = 0.05,
+                                max_precision_drop = 0.10,
+                                max_auc_drop = 0.03) {
   now <- eval_at_threshold(final$model, current, final$threshold)
 
-  recall_drop <- reference_metrics$recall - now$recall
-  auc_drop    <- reference_metrics$roc_auc - now$roc_auc
+  recall_drop    <- reference_metrics$recall    - now$recall
+  precision_drop <- reference_metrics$precision - now$precision
+  auc_drop       <- reference_metrics$roc_auc   - now$roc_auc
 
-  dplyr::mutate(now,
-                recall_drop = recall_drop,
-                auc_drop    = auc_drop,
-                alert       = recall_drop > max_recall_drop | auc_drop > max_auc_drop)
+  dplyr::mutate(
+    now,
+    recall_drop    = recall_drop,
+    precision_drop = precision_drop,
+    auc_drop       = auc_drop,
+    alert = recall_drop > max_recall_drop |
+      precision_drop > max_precision_drop |
+      auc_drop > max_auc_drop
+  )
 }
-
-
 # plot_drift()
 #   Diagramme du PSI par variable avec les seuils 0.10 et 0.25.
 #   Input  : drift = sortie de detect_drift (éventuellement + score_drift)
