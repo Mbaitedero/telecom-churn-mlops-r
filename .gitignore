@@ -32,3 +32,4 @@ reports/metrics/*
 # Secrets
 .env
 !data/raw/*.dvc
+!data/raw/churn.csv.sha256
