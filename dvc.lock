@@ -1,0 +1,40 @@
+schema: '2.0'
+stages:
+  pipeline:
+    cmd: Rscript -e "targets::tar_invalidate(c(test_eval, test_files)); 
+      targets::tar_make()"
+    deps:
+    - path: R
+      hash: md5
+      md5: c76de598b5abb037687421ee2fc7afa1.dir
+      size: 39733
+      nfiles: 7
+    - path: _targets.R
+      hash: md5
+      md5: c7973cc3b1465a9383c0914d79386a77
+      size: 2776
+    - path: data/raw/churn.csv
+      hash: md5
+      md5: 0f9de68e012bd3aed5fa7cdc9fc421af
+      size: 977501
+    outs:
+    - path: data/processed/test.csv
+      hash: md5
+      md5: b604dd1585a42efc2292131e9fc1e507
+      size: 134909
+    - path: data/processed/train.csv
+      hash: md5
+      md5: 13f72338941a1348ef1d40167c8e70fe
+      size: 625668
+    - path: data/processed/valid.csv
+      hash: md5
+      md5: 59554bfc24e9db7313c89eb7623cc651
+      size: 132905
+    - path: models/final_model.rds
+      hash: md5
+      md5: 0bdd4c20531c144c09cbdb184c399a6f
+      size: 337569
+    - path: reports/metrics/test_metrics.csv
+      hash: md5
+      md5: 300cb6c4fd8a755ae3f7bca5635d7cf8
+      size: 165

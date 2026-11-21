@@ -1,0 +1,15 @@
+stages:
+  pipeline:
+    cmd: 'Rscript -e "targets::tar_invalidate(c(test_eval, test_files)); targets::tar_make()"'
+    deps:
+      - _targets.R
+      - R
+      - data/raw/churn.csv
+    outs:
+      - data/processed/train.csv
+      - data/processed/valid.csv
+      - data/processed/test.csv
+      - models/final_model.rds
+    metrics:
+      - reports/metrics/test_metrics.csv:
+          cache: false
