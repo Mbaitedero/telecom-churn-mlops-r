@@ -134,6 +134,7 @@ d'entraînement) :
 
 ## Limites et pistes
 
+
 - Jeu de données public et propre : en production, il faudrait journaliser les
   requêtes de l'API pour alimenter le monitoring.
 - Le seuil (0,30) dépend du coût réel d'une offre de rétention par rapport à

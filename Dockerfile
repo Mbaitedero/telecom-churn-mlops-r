@@ -1,7 +1,6 @@
 # ==============================================================================
-# Image de l'API de prédiction du churn (R 4.5.2 + renv + plumber)
-# Build  : docker build -t telecom-churn-api .
-# Run    : docker run -p 8000:8000 telecom-churn-api
+# Image unique : API plumber (port 8000) et frontend Shiny (port 3838),
+# lancés par deux services docker-compose avec des commandes différentes.
 # ==============================================================================
 FROM rocker/r-ver:4.5.2
 
@@ -23,16 +22,16 @@ COPY renv.lock renv.lock
 COPY renv/activate.R renv/activate.R
 COPY renv/settings.json renv/settings.json
 
-# Binaires précompilés (Posit Package Manager) pour éviter de tout compiler
 RUN CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME") && \
     RENV_CONFIG_REPOS_OVERRIDE="https://packagemanager.posit.co/cran/__linux__/${CODENAME}/latest" \
     R -e "renv::restore(prompt = FALSE)"
 
-# 2) Code et modèle
+# 2) Code, frontend et modèle
 COPY R/ R/
 COPY plumber/ plumber/
+COPY app/ app/
 COPY models/final_model.rds models/final_model.rds
 
-EXPOSE 8000
+EXPOSE 8000 3838
 
 CMD ["R", "-e", "plumber::plumb(file = 'plumber/api.R')$run(host = '0.0.0.0', port = 8000)"]

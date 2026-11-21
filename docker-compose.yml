@@ -11,3 +11,15 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  app:
+    image: telecom-churn-api
+    command: ["R", "-e", "shiny::runApp('app', host = '0.0.0.0', port = 3838)"]
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "3838:3838"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
