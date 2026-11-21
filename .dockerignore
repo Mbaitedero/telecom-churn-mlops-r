@@ -1,0 +1,9 @@
+.git
+.Rproj.user
+*.Rproj
+_targets
+data
+reports
+tests
+renv/library
+renv/staging
