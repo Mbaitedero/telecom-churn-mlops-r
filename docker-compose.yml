@@ -1,9 +1,50 @@
+name: telecom-churn-mlops-r
+
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Définis POSTGRES_DB dans .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Définis POSTGRES_USER dans .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Définis POSTGRES_PASSWORD dans .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Développement seulement : accessible depuis ta machine, pas depuis le réseau
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # Service ponctuel : applique les migrations puis s'arrête
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      APP_DB_USER: ${APP_DB_USER:?Définis APP_DB_USER dans .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Définis APP_DB_PASSWORD dans .env}
+    volumes:
+      - ./db:/db:ro
+    entrypoint: ["sh", "/db/migrate.sh"]
+
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: telecom-churn-api
     ports:
-      - "8000:8000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -18,8 +59,17 @@ services:
     environment:
       API_URL: http://api:8000
     ports:
-      - "3838:3838"
+      - "${BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3838}:3838"
     depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3838/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  pgdata:

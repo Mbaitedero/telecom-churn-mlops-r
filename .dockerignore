@@ -7,3 +7,8 @@ reports
 tests
 renv/library
 renv/staging
+.env
+.env.*
+!.env.example
+db
+backups

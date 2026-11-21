@@ -33,3 +33,6 @@ reports/metrics/*
 .env
 !data/raw/*.dvc
 !data/raw/churn.csv.sha256
+.env.*
+!.env.example
+backups/
