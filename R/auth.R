@@ -1,6 +1,6 @@
 # ==============================================================================
 # Fichier : R/auth.R
-# Rôle    : Authentification : mots de passe (Argon2id), jetons JWT liés à une
+# Rôle    : Authentification : mots de passe (scrypt (libsodium)), jetons JWT liés à une
 #           session en base, connexion avec verrouillage, déconnexion,
 #           permissions et journal d'audit.
 #
@@ -71,6 +71,7 @@ issue_token <- function(user_id, session_id, expires_at) {
 
 # decode_token()
 #   Vérifie signature, expiration, émetteur et audience.
+#   (jose vérifie la signature mais PAS l'expiration : on la contrôle ici.)
 #   Output : liste des revendications, ou NULL si le jeton est invalide
 decode_token <- function(token) {
   tryCatch({
@@ -79,6 +80,10 @@ decode_token <- function(token) {
     if (!identical(claims$iss, AUTH_ISSUER)) return(NULL)
     if (!identical(as.character(claims$aud), AUTH_AUDIENCE)) return(NULL)
     if (is.null(claims$sub) || is.null(claims$jti)) return(NULL)
+
+    exp <- suppressWarnings(as.numeric(claims$exp))
+    if (length(exp) != 1 || is.na(exp) || exp <= as.numeric(Sys.time())) return(NULL)
+
     claims
   }, error = function(e) NULL)
 }

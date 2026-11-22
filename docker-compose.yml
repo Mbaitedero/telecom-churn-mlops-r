@@ -18,7 +18,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 15s
+      start_period: 120s
 
   # Service ponctuel : applique les migrations puis s'arrête
   migrate:
@@ -43,6 +43,20 @@ services:
       context: .
       dockerfile: Dockerfile
     image: telecom-churn-api
+    environment:
+      DB_HOST: db
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${APP_DB_USER}
+      DB_PASSWORD: ${APP_DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?Définis JWT_SECRET dans .env}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      API_DOCS: ${API_DOCS:-false}
+      MAX_BODY_BYTES: ${MAX_BODY_BYTES:-4194304}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     restart: unless-stopped
@@ -51,7 +65,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 120s
 
   app:
     image: telecom-churn-api
@@ -69,7 +83,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 120s
 
 volumes:
   pgdata:

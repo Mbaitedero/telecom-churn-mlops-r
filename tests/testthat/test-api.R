@@ -20,6 +20,7 @@ start_test_api <- function(auth_required = "true", max_body = 2500) {
     DB_NAME = Sys.getenv("DB_NAME"), DB_USER = Sys.getenv("APP_DB_USER"),
     DB_PASSWORD = Sys.getenv("APP_DB_PASSWORD")
   )
+  log_tail <- function() paste(utils::tail(readLines(log, warn = FALSE), 15), collapse = "\n")
 
   proc <- callr::r_bg(
     function(root, port, envs) {
@@ -33,24 +34,28 @@ start_test_api <- function(auth_required = "true", max_body = 2500) {
   )
 
   url <- paste0("http://127.0.0.1:", port)
-  status <- NA
-  for (i in 1:90) {
-    if (!proc$is_alive()) {
-      stop("API arrêtée au démarrage :\n",
-           paste(utils::tail(readLines(log, warn = FALSE), 20), collapse = "\n"))
-    }
-    status <- tryCatch(
+  status <- NA_integer_
+  for (i in 1:60) {
+    if (!proc$is_alive()) stop("API arrêtée au démarrage :\n", log_tail())
+
+    resp <- tryCatch(
       httr2::request(paste0(url, "/health")) |>
         httr2::req_timeout(2) |>
         httr2::req_error(is_error = function(r) FALSE) |>
-        httr2::req_perform() |> httr2::resp_status(),
-      error = function(e) NA)
+        httr2::req_perform(),
+      error = function(e) NULL)
+    status <- if (is.null(resp)) NA_integer_ else httr2::resp_status(resp)
+
     if (identical(status, 200L)) break
+    if (!is.na(status) && status >= 500) {
+      proc$kill()
+      stop("L'API répond ", status, " sur /health :\n", log_tail())
+    }
     Sys.sleep(1)
   }
   if (!identical(status, 200L)) {
     proc$kill()
-    stop("API injoignable après 90 s")
+    stop("API injoignable après 60 s :\n", log_tail())
   }
   list(proc = proc, url = url)
 }
@@ -74,9 +79,10 @@ api_req <- function(api, method, path, body = NULL, raw_body = NULL, token = NUL
 # --- Mise en place du fichier : API stricte + comptes de test -------------------
 strict <- NULL
 users  <- NULL
+strict_error <- NULL
 if (api_prereqs_ok()) {
   strict <- tryCatch(start_test_api("true"),
-                     error = function(e) { message(conditionMessage(e)); NULL })
+                     error = function(e) { strict_error <<- conditionMessage(e); NULL })
   if (!is.null(strict)) {
     withr::defer(strict$proc$kill(), testthat::teardown_env())
     con <- db_connect()
@@ -89,8 +95,11 @@ if (api_prereqs_ok()) {
 }
 
 skip_if_no_api <- function() {
-  testthat::skip_if(is.null(strict) || is.null(users),
-                    "API de test indisponible (base de test, modèle, callr ou httr2)")
+  if (is.null(strict) || is.null(users)) {
+    testthat::skip(paste0("API de test indisponible. ",
+                          if (!is.null(strict_error)) strict_error
+                          else "(base de test, modèle, callr ou httr2 ?)"))
+  }
 }
 
 token_for <- function(user) {
@@ -188,8 +197,8 @@ test_that("/predict : 401 sans jeton, 403 sans permission, 200 avec permission",
 
 test_that("/predict par lot : permission dédiée et journal d'audit", {
   skip_if_no_api()
-  one   <- jsonlite::fromJSON(sample_client_json(), simplifyDataFrame = TRUE)
-  two   <- jsonlite::toJSON(rbind(one, one), dataframe = "rows", auto_unbox = TRUE)
+  one <- jsonlite::fromJSON(sample_client_json(), simplifyDataFrame = TRUE)
+  two <- jsonlite::toJSON(rbind(one, one), dataframe = "rows", auto_unbox = TRUE)
 
   r <- api_req(strict, "POST", "/predict", raw_body = as.character(two),
                token = token_for(users$data))
