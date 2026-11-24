@@ -9,6 +9,7 @@ if (nchar(Sys.getenv("JWT_SECRET")) < 32) {
 
 source(here::here("R", "db.R"))
 source(here::here("R", "auth.R"))
+source(here::here("R", "users.R"))
 
 skip_if_no_db <- function() {
   testthat::skip_if_not(
@@ -33,4 +34,10 @@ new_test_user <- function(con, role = "auditor", password = "Mot2Passe-Solide-42
   id <- create_user(con, username = name, email = paste0(name, "@example.test"),
                     full_name = "Utilisateur Test", password = password, role_code = role)
   list(id = id, username = name, password = password)
+}
+
+# Code HTTP de l'erreur applicative levée par expr, ou NA si aucune erreur.
+app_status <- function(expr) {
+  tryCatch({ force(expr); NA_integer_ },
+           app_error = function(e) as.integer(e$status))
 }
