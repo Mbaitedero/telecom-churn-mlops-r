@@ -691,33 +691,6 @@
       "Maintainer": "Ravi Varadhan <ravi.varadhan@jhu.edu>",
       "Repository": "CRAN"
     },
-    "argon2": {
-      "Package": "argon2",
-      "Version": "0.4-1",
-      "Source": "GitHub",
-      "Type": "Package",
-      "Title": "Secure Password Hashing",
-      "Description": "Utilities for secure password hashing via the argon2 algorithm. It is a relatively new hashing algorithm and is believed to be very secure. The 'argon2' implementation included in the package is the reference implementation.  The package also includes some utilities that should be useful for digest authentication, including a wrapper of 'blake2b'.  For similar R packages, see sodium and 'bcrypt'.  See <https://en.wikipedia.org/wiki/Argon2> or <https://eprint.iacr.org/2015/430.pdf> for more information.",
-      "License": "BSD 2-clause License + file LICENSE",
-      "Copyright": "See inst/COPYRIGHTS for files in src/argon2.",
-      "Depends": [
-        "R (>= 3.0.0)"
-      ],
-      "NeedsCompilation": "yes",
-      "ByteCompile": "yes",
-      "Authors@R": "person(\"Drew\", \"Schmidt\", role=c(\"aut\", \"cre\"), email=\"wrathematics@gmail.com\")",
-      "URL": "https://github.com/wrathematics/argon2",
-      "BugReports": "https://github.com/wrathematics/argon2/issues",
-      "Maintainer": "Drew Schmidt <wrathematics@gmail.com>",
-      "RoxygenNote": "7.1.2",
-      "RemoteType": "github",
-      "RemoteHost": "api.github.com",
-      "RemoteRepo": "argon2",
-      "RemoteUsername": "wrathematics",
-      "RemoteRef": "HEAD",
-      "RemoteSha": "fce4a6405bda88ab564d27fd5c36c91b9c5bf9b3",
-      "Author": "Drew Schmidt [aut, cre]"
-    },
     "askpass": {
       "Package": "askpass",
       "Version": "1.2.1",
