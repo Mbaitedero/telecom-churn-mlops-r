@@ -150,7 +150,10 @@ extract_predictions <- function(body) {
 
 ui <- dashboardPage(
   skin = "blue",
-  dashboardHeader(title = "Telecom Churn | MLOps"),
+  dashboardHeader(
+    title = "Telecom Churn | MLOps",
+    tags$li(class = "dropdown", style = "padding: 12px 15px;", uiOutput("header_user"))
+  ),
   dashboardSidebar(
     sidebarMenu(
       id = "sidebar_menu",
@@ -159,6 +162,7 @@ ui <- dashboardPage(
       menuItem("Analyse de masse", tabName = "batch", icon = icon("table")),
       menuItem("Monitoring", tabName = "monitoring", icon = icon("line-chart")),
       menuItem("Interprétabilité", tabName = "interpretability", icon = icon("lightbulb-o")),
+      menuItem("Utilisateurs", tabName = "users", icon = icon("users")),
       menuItem("À propos", tabName = "about", icon = icon("info-circle"))
     ),
     br(),
@@ -189,6 +193,7 @@ ui <- dashboardPage(
       .main-header .logo { font-weight: 700; }
     "))),
     tabItems(
+      users_tab_ui(),
       # ------------------------------------------------------------------------
       # VUE D'ENSEMBLE
       # ------------------------------------------------------------------------
@@ -439,6 +444,12 @@ ui <- dashboardPage(
 
 server <- function(input, output, session) {
 
+  # --- Authentification (app/R/auth_ui.R) : le jeton reste côté serveur ----
+  auth <- auth_server(input, output, session)
+  auth_token <- function() auth$token()
+  users_server("users", auth)
+
+
   history <- reactiveVal(data.frame(
     timestamp = as.POSIXct(character()),
     prediction = character(),
@@ -523,7 +534,7 @@ server <- function(input, output, session) {
     log_info("Prédiction individuelle demandée")
     tryCatch({
       req(customer())
-      res <- api_predict(customer())
+      res <- api_predict_auth(customer(), auth_token())
 
       if (res$status < 200 || res$status >= 300) {
         msg <- paste(unlist(res$body), collapse = " ")
@@ -669,7 +680,7 @@ server <- function(input, output, session) {
 
       # Conserver les colonnes requises dans l'ordre attendu par le modèle.
       df_model <- df[, required_cols, drop = FALSE]
-      res <- api_predict(df_model)
+      res <- api_predict_auth(df_model, auth_token())
       if (res$status < 200 || res$status >= 300) {
         showNotification(paste("Erreur API :", paste(unlist(res$body), collapse = " ")),
                          type = "error", duration = 10)
