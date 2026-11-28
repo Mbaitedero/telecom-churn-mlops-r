@@ -2,7 +2,10 @@
 # Fichier : plumber/api.R
 # Rôle    : API REST de prédiction du churn télécom, authentifiée.
 #   Publiques : GET /health, POST /auth/login
-#   Protégées : POST /auth/logout, GET /auth/me, POST /predict
+#   Protégées : POST /auth/logout, GET /auth/me, POST /auth/change-password,
+#               POST /predict,
+#               GET /users, GET /users/<id>, POST /users, PATCH /users/<id>,
+#               POST /users/<id>/disable, POST /users/<id>/enable
 #
 # Config (variables d'environnement) :
 #   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD   base PostgreSQL
@@ -32,6 +35,7 @@ source(file.path(root, "R", "preprocessing.R"))
 source(file.path(root, "R", "predict.R"))
 source(file.path(root, "R", "db.R"))
 source(file.path(root, "R", "auth.R"))
+source(file.path(root, "R", "users.R"))
 
 # --- Configuration ------------------------------------------------------------
 AUTH_REQUIRED  <- !identical(tolower(Sys.getenv("AUTH_REQUIRED", "true")), "false")
@@ -81,6 +85,32 @@ deny <- function(req, res, action, permission) {
   )
   res$status <- 403
   list(error = "Accès refusé")
+}
+
+# Évalue expr : une erreur applicative (app_error) devient son code HTTP et son
+# message ; toute autre erreur devient un 500 sans détail interne.
+handle_app <- function(req, res, expr) {
+  tryCatch(
+    expr,
+    app_error = function(e) {
+      res$status <- e$status
+      list(error = conditionMessage(e))
+    },
+    error = function(e) {
+      message(sprintf("[ERROR] %s %s [%s] - %s", req$REQUEST_METHOD, req$PATH_INFO,
+                      req$request_id, conditionMessage(e)))
+      res$status <- 500
+      list(error = "Erreur interne du serveur", request_id = req$request_id)
+    }
+  )
+}
+
+# Une ligne de data.frame -> objet JSON (et non tableau d'un élément)
+user_json <- function(df) as.list(df[1, , drop = FALSE])
+
+bad_json <- function(res) {
+  res$status <- 400
+  list(error = "Corps de requête JSON invalide")
 }
 
 
@@ -158,7 +188,7 @@ function(req, res) {
 
 
 # ==============================================================================
-# ROUTES
+# ROUTES : service et authentification
 # ==============================================================================
 
 #* État du service (utilisé par le healthcheck Docker)
@@ -183,10 +213,7 @@ function(res) {
 #* @post /auth/login
 function(req, res) {
   body <- parse_json_body(req)
-  if (is.null(body) || !is.list(body)) {
-    res$status <- 400
-    return(list(error = "Corps de requête JSON invalide"))
-  }
+  if (is.null(body) || !is.list(body)) return(bad_json(res))
 
   result <- login(pool, body$identifier, body$password)
   if (isTRUE(result$ok)) {
@@ -219,6 +246,99 @@ function(req) {
     permissions = as.list(req$auth$permissions)
   )
 }
+
+#* Changement de mot de passe : {"current_password": "...", "new_password": "..."}
+#* @parser text
+#* @post /auth/change-password
+function(req, res) {
+  body <- parse_json_body(req)
+  if (is.null(body) || !is.list(body)) return(bad_json(res))
+
+  handle_app(req, res, {
+    change_password(pool, req$auth, body$current_password, body$new_password)
+    list(status = "password_changed")
+  })
+}
+
+
+# ==============================================================================
+# ROUTES : gestion des utilisateurs
+# ==============================================================================
+
+#* Liste paginée : ?q=&role=&status=&page=&page_size=
+#* @get /users
+function(req, res, q = NULL, role = NULL, status = NULL,
+         page = "1", page_size = "20") {
+  if (!has_permission(req$auth, "users.read")) {
+    return(deny(req, res, "users.list", "users.read"))
+  }
+  handle_app(req, res, list_users(pool, q, role, status, page, page_size))
+}
+
+#* Détail d'un utilisateur
+#* @get /users/<id>
+function(id, req, res) {
+  if (!has_permission(req$auth, "users.read")) {
+    return(deny(req, res, "users.get", "users.read"))
+  }
+  handle_app(req, res, list(user = user_json(require_user(pool, id))))
+}
+
+#* Création : {"username", "email", "full_name", "password", "role"}
+#* @parser text
+#* @post /users
+function(req, res) {
+  if (!has_permission(req$auth, "users.manage")) {
+    return(deny(req, res, "user.create", "users.manage"))
+  }
+  body <- parse_json_body(req)
+  if (is.null(body) || !is.list(body)) return(bad_json(res))
+
+  handle_app(req, res, {
+    u <- create_user_as(pool, req$auth, body$username, body$email,
+                        body$full_name, body$password, body$role)
+    res$status <- 201
+    list(user = user_json(u))
+  })
+}
+
+#* Modification : {"email", "full_name", "role"} (au moins un champ)
+#* @parser text
+#* @patch /users/<id>
+function(id, req, res) {
+  if (!has_permission(req$auth, "users.manage")) {
+    return(deny(req, res, "user.update", "users.manage"))
+  }
+  body <- parse_json_body(req)
+  if (is.null(body) || !is.list(body)) return(bad_json(res))
+
+  handle_app(req, res, list(user = user_json(update_user(pool, req$auth, id, body))))
+}
+
+#* Désactivation (révoque toutes les sessions de l'utilisateur)
+#* @post /users/<id>/disable
+function(id, req, res) {
+  if (!has_permission(req$auth, "users.manage")) {
+    return(deny(req, res, "user.disable", "users.manage"))
+  }
+  handle_app(req, res,
+             list(user = user_json(set_user_status(pool, req$auth, id, "disabled"))))
+}
+
+#* Réactivation
+#* @post /users/<id>/enable
+function(id, req, res) {
+  if (!has_permission(req$auth, "users.manage")) {
+    return(deny(req, res, "user.enable", "users.manage"))
+  }
+  handle_app(req, res,
+             list(user = user_json(set_user_status(pool, req$auth, id, "active"))))
+}
+
+
+# ==============================================================================
+# ROUTES : prédiction
+# ==============================================================================
 
 #* Prédit le risque de churn. Corps JSON : un client (objet) ou plusieurs (liste)
 #* @parser text

@@ -111,7 +111,18 @@ sample_client_json <- function() {
   paste(readLines(here::here("tests", "sample_customer.json"), warn = FALSE), collapse = "")
 }
 
-# --- Tests ----------------------------------------------------------------------
+# Compte créé directement en base (validé), pour les tests qui le modifient.
+fresh_user <- function(role) {
+  con <- db_connect()
+  on.exit(DBI::dbDisconnect(con))
+  new_test_user(con, role)
+}
+
+rand_name <- function(prefix = "api") {
+  paste0(prefix, "_", paste(sample(c(letters, 0:9), 8, TRUE), collapse = ""))
+}
+
+# --- Tests : service, authentification, prédiction ------------------------------
 
 test_that("/health est public et décrit l'état du service", {
   skip_if_no_api()
@@ -146,9 +157,7 @@ test_that("login : succès, échec générique, JSON invalide", {
 
 test_that("login : verrouillage après 5 échecs (429)", {
   skip_if_no_api()
-  con <- db_connect()
-  u <- new_test_user(con)
-  DBI::dbDisconnect(con)
+  u <- fresh_user("auditor")
 
   for (i in 1:5) {
     expect_equal(api_req(strict, "POST", "/auth/login",
@@ -247,6 +256,164 @@ test_that("route inconnue : 404 en JSON, sans détail interne", {
   expect_equal(r$body$error, "Ressource introuvable")
 })
 
+# --- Tests : gestion des utilisateurs -------------------------------------------
+
+test_that("GET /users : droits, recherche, pagination, pas de hachage", {
+  skip_if_no_api()
+  expect_equal(api_req(strict, "GET", "/users")$status, 401)
+  expect_equal(api_req(strict, "GET", "/users", token = token_for(users$auditor))$status, 403)
+  expect_equal(api_req(strict, "GET", "/users", token = token_for(users$sales))$status, 403)
+
+  tok <- token_for(users$admin)
+  r <- api_req(strict, "GET", paste0("/users?q=", users$admin$username, "&page_size=5"), token = tok)
+  expect_equal(r$status, 200)
+  expect_gte(r$body$total, 1)
+  expect_equal(r$body$page, 1)
+  expect_equal(r$body$items[[1]]$username, users$admin$username)
+  expect_equal(r$body$items[[1]]$role, "admin")
+  expect_null(r$body$items[[1]]$password_hash)
+
+  expect_equal(api_req(strict, "GET", "/users?page_size=500", token = tok)$status, 400)
+  expect_equal(api_req(strict, "GET", "/users?status=autre", token = tok)$status, 400)
+
+  one <- api_req(strict, "GET", paste0("/users/", users$data$id), token = tok)
+  expect_equal(one$status, 200)
+  expect_equal(one$body$user$username, users$data$username)
+  expect_equal(api_req(strict, "GET", "/users/pas-un-uuid", token = tok)$status, 404)
+
+  # Le refus est journalisé
+  con <- db_connect()
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+  n <- DBI::dbGetQuery(con, "
+    SELECT count(*)::int AS n FROM audit_log
+    WHERE action = 'users.list' AND result = 'denied' AND user_id = $1::uuid",
+                       params = list(users$auditor$id))$n
+  expect_gte(n, 1)
+})
+
+test_that("POST /users : création, hiérarchie des rôles, doublons, validations", {
+  skip_if_no_api()
+  tok <- token_for(users$admin)
+  name <- rand_name()
+  body <- list(username = name, email = paste0(name, "@example.test"),
+               full_name = "Créé par API", password = "Mot2Passe-Solide-42",
+               role = "auditor")
+
+  r <- api_req(strict, "POST", "/users", body = body, token = tok)
+  expect_equal(r$status, 201)
+  expect_equal(r$body$user$username, name)
+  expect_equal(r$body$user$role, "auditor")
+  expect_null(r$body$user$password)
+  expect_null(r$body$user$password_hash)
+  expect_equal(api_req(strict, "POST", "/auth/login",
+                       list(identifier = name, password = body$password))$status, 200)
+
+  expect_equal(api_req(strict, "POST", "/users", body = body, token = tok)$status, 409)
+
+  other <- rand_name()
+  as_admin <- modifyList(body, list(username = other, email = paste0(other, "@example.test"),
+                                    role = "admin"))
+  expect_equal(api_req(strict, "POST", "/users", body = as_admin, token = tok)$status, 403)
+
+  expect_equal(api_req(strict, "POST", "/users", body = body,
+                       token = token_for(users$auditor))$status, 403)
+  expect_equal(api_req(strict, "POST", "/users", body = body)$status, 401)
+
+  sans_mail <- body[setdiff(names(body), "email")]
+  sans_mail$username <- rand_name()
+  expect_equal(api_req(strict, "POST", "/users", body = sans_mail, token = tok)$status, 400)
+
+  faible <- modifyList(body, list(username = rand_name(), email = "faible@example.test",
+                                  password = "court1"))
+  expect_equal(api_req(strict, "POST", "/users", body = faible, token = tok)$status, 400)
+
+  expect_equal(api_req(strict, "POST", "/users", raw_body = "{pas du json", token = tok)$status, 400)
+})
+
+test_that("PATCH /users/<id> : modification, droits et validations", {
+  skip_if_no_api()
+  tok <- token_for(users$admin)
+  target <- fresh_user("sales_agent")
+  path <- paste0("/users/", target$id)
+
+  r <- api_req(strict, "PATCH", path, body = list(full_name = "Nom modifié"), token = tok)
+  expect_equal(r$status, 200)
+  expect_equal(r$body$user$full_name, "Nom modifié")
+
+  peer <- fresh_user("admin")
+  expect_equal(api_req(strict, "PATCH", paste0("/users/", peer$id),
+                       body = list(full_name = "X"), token = tok)$status, 403)
+  expect_equal(api_req(strict, "PATCH", path, body = list(full_name = "X"),
+                       token = token_for(users$auditor))$status, 403)
+  expect_equal(api_req(strict, "PATCH", path, body = list(role = "admin"), token = tok)$status, 403)
+  expect_equal(api_req(strict, "PATCH", path, body = list(mot = "x"), token = tok)$status, 400)
+  expect_equal(api_req(strict, "PATCH", path, body = list(role = "inconnu"), token = tok)$status, 400)
+  expect_equal(api_req(strict, "PATCH", "/users/00000000-0000-0000-0000-000000000000",
+                       body = list(full_name = "X"), token = tok)$status, 404)
+  expect_equal(api_req(strict, "PATCH", path, raw_body = "{pas du json", token = tok)$status, 400)
+})
+
+test_that("désactivation et réactivation : jetons révoqués, protections", {
+  skip_if_no_api()
+  tok <- token_for(users$admin)
+  target <- fresh_user("sales_agent")
+  target_tok <- token_for(target)
+  expect_equal(api_req(strict, "GET", "/auth/me", token = target_tok)$status, 200)
+
+  d <- api_req(strict, "POST", paste0("/users/", target$id, "/disable"), token = tok)
+  expect_equal(d$status, 200)
+  expect_equal(d$body$user$status, "disabled")
+  expect_equal(api_req(strict, "GET", "/auth/me", token = target_tok)$status, 401)
+  expect_equal(api_req(strict, "POST", "/auth/login",
+                       list(identifier = target$username, password = target$password))$status, 401)
+
+  e <- api_req(strict, "POST", paste0("/users/", target$id, "/enable"), token = tok)
+  expect_equal(e$status, 200)
+  expect_equal(e$body$user$status, "active")
+  expect_equal(api_req(strict, "POST", "/auth/login",
+                       list(identifier = target$username, password = target$password))$status, 200)
+
+  # Interdits : se désactiver soi-même, désactiver un pair, agir sans droit
+  expect_equal(api_req(strict, "POST", paste0("/users/", users$admin$id, "/disable"),
+                       token = tok)$status, 403)
+  peer <- fresh_user("admin")
+  expect_equal(api_req(strict, "POST", paste0("/users/", peer$id, "/disable"),
+                       token = tok)$status, 403)
+  expect_equal(api_req(strict, "POST", paste0("/users/", target$id, "/disable"),
+                       token = token_for(users$auditor))$status, 403)
+})
+
+test_that("changement de mot de passe : contrôles et révocation des autres sessions", {
+  skip_if_no_api()
+  u <- fresh_user("auditor")
+  t1 <- token_for(u)
+  t2 <- token_for(u)
+  new_pw <- "Nouveau-Mot2Passe-77"
+
+  expect_equal(api_req(strict, "POST", "/auth/change-password", token = t1,
+                       body = list(current_password = "Mauvais-Mot2Passe-9",
+                                   new_password = new_pw))$status, 403)
+  expect_equal(api_req(strict, "POST", "/auth/change-password", token = t1,
+                       body = list(current_password = u$password,
+                                   new_password = "court1"))$status, 400)
+  expect_equal(api_req(strict, "POST", "/auth/change-password",
+                       body = list(current_password = u$password,
+                                   new_password = new_pw))$status, 401)
+
+  ok <- api_req(strict, "POST", "/auth/change-password", token = t1,
+                body = list(current_password = u$password, new_password = new_pw))
+  expect_equal(ok$status, 200)
+
+  expect_equal(api_req(strict, "GET", "/auth/me", token = t1)$status, 200)   # session courante
+  expect_equal(api_req(strict, "GET", "/auth/me", token = t2)$status, 401)   # autre session
+  expect_equal(api_req(strict, "POST", "/auth/login",
+                       list(identifier = u$username, password = u$password))$status, 401)
+  expect_equal(api_req(strict, "POST", "/auth/login",
+                       list(identifier = u$username, password = new_pw))$status, 200)
+})
+
+# --- Test : mode transitoire ----------------------------------------------------
+
 test_that("mode transitoire AUTH_REQUIRED=false : /predict ouvert, le reste protégé", {
   skip_if_no_api()
   legacy <- tryCatch(start_test_api("false"), error = function(e) NULL)
@@ -257,5 +424,6 @@ test_that("mode transitoire AUTH_REQUIRED=false : /predict ouvert, le reste prot
   expect_equal(r$status, 200)
   expect_equal(r$body$predictions[[1]]$churn_probability, 0.6891, tolerance = 1e-4)
   expect_equal(api_req(legacy, "GET", "/auth/me")$status, 401)
+  expect_equal(api_req(legacy, "GET", "/users")$status, 401)
   expect_false(api_req(legacy, "GET", "/health")$body$auth_required)
 })
